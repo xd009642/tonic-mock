@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package tonic_mock.dummy;
+
+service Mock {
+  rpc Unary(Empty) returns (Empty);
+  rpc ServerStream(Empty) returns (stream Empty);
+  rpc ClientStream(stream Empty) returns (Empty);
+  rpc BidirStream(stream Empty) returns (stream Empty);
+}
+
+
+message Empty {
+
+}
