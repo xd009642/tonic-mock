@@ -8,33 +8,33 @@ pub enum RequestType {
 }
 
 pub struct UnaryMethodMock<T, U> {
-    matchers: Vec<Matcher<T>>,
-    response: Box<dyn Responder>,
+    matchers: Vec<Match<T>>,
+    response: Box<dyn Responder<T, U>>,
 }
 
 impl<T, U> UnaryMethodMock<T, U> {
-    pub fn process_request(&self, t: Request<T>) -> Result<Response<U>, Status> {
+    pub fn process_request(&self, request: Request<T>) -> Result<Response<U>, Status> {
         for matcher in &self.matchers {
-            assert!(matcher.matches(&req))
+            assert!(matcher.matches(&request))
         }
-        self.response(self.response.respond(t))
+        self.response.respond(request)
     }
 }
 
-pub struct Matcher {
-    matcher: Box<dyn Matcher<T, U>>,
+pub struct Match<T> {
+    matcher: Box<dyn Matcher<T>>,
 }
 
-impl Matcher {
-    pub fn matches(request: &Request<T>) -> bool {
+impl<T> Match<T> {
+    pub fn matches(&self, request: &Request<T>) -> bool {
         self.matcher.matches(request)
     }
 }
 
 pub trait Matcher<T> {
-    fn matches(request: &Request<T>) -> bool;
+    fn matches(&self, request: &Request<T>) -> bool;
 }
 
 pub trait Responder<T, U> {
-    fn respond(response: Request<T>) -> Result<Response<U>, Status>;
+    fn respond(&self, response: Request<T>) -> Result<Response<U>, Status>;
 }

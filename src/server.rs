@@ -1,61 +1,65 @@
-use crate::Future;
-use bytes::Bytes;
-use core::pin::Pin;
-use core::task::Context;
-use core::task::Poll;
-use futures_util::pin_mut;
-use futures_util::TryStreamExt;
-use prost::Message;
-use tonic::body::BoxBody;
-use tonic::codec::Codec;
-use tonic::codec::{ProstCodec, Streaming};
-use tonic::transport::Body;
-use tonic::{Code, Status};
-use tower::Service;
+use async_trait::async_trait;
+use deadpool::managed::{Object, Pool};
+use once_cell::sync::Lazy;
+use std::convert::Infallible;
+use std::net::TcpListener;
 
-pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+static MOCK_SERVER_POOL: Lazy<Pool<MockServerPoolManager>> = Lazy::new(|| {
+    Pool::builder(MockServerPoolManager)
+        .max_size(1000)
+        .build()
+        .expect("Building a server pool is not expected to fail. Please report an issue")
+});
 
-trait IncomingMessage: Message + Send {}
-trait OutgoingMessage: Message + Send + Default {}
+pub(crate) type PooledMockServer = Object<MockServerPoolManager>;
 
-pub type DynCodec =
-    ProstCodec<Box<dyn IncomingMessage + 'static>, Box<dyn OutgoingMessage + 'static>>;
-
-pub struct GrpcMockServer {
-    unary_matchers: Vec<Box<dyn UnaryResponder>>,
+async fn get_pooled_mock_server() -> PooledMockServer {
+    MOCK_SERVER_POOL
+        .get()
+        .await
+        .expect("Failed to get a GrpcMockServer from the pool")
 }
 
-impl Service<http::Request<Body>> for GrpcMockServer {
-    type Response = http::Response<BoxBody>;
-    type Error = Status;
-    type Future = BoxFuture<Result<Self::Response, Self::Error>>;
+pub struct GrpcMockServer {
+    listener: TcpListener,
+}
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+impl GrpcMockServer {
+    async fn start() -> Self {
+        TcpListener::bind("127.0.0.1:0").expect("Failed to bind an OS port for a mock server.");
+
+        todo!()
     }
 
-    fn call(&mut self, req: http::Request<Body>) -> Self::Future {
-        // Now we want to get the Uri check against our matchers and pass what we need into the
-        // future. Maybe we want different futures for streaming vs non-streaming request
+    pub fn serve(&self) {}
 
-        let fut = async move {
-            let mut codec = DynCodec::default();
-            codec.decoder();
+    pub async fn reset(&self) {}
+}
 
-            let (parts, body) = req.into_parts();
+/// The `BareMockServer` pool manager.
+///
+/// It:
+/// - creates a new `BareMockServer` if there is none to borrow from the pool;
+/// - "cleans up" used `BareMockServer`s before making them available again for other tests to use.
+pub(crate) struct MockServerPoolManager;
 
-            let stream = Streaming::new_request(codec.decoder(), body, None, None);
+#[async_trait]
+impl deadpool::managed::Manager for MockServerPoolManager {
+    type Error = Infallible;
+    type Type = GrpcMockServer;
 
-            pin_mut!(stream);
+    async fn create(&self) -> Result<GrpcMockServer, Infallible> {
+        // All servers in the pool use the default configuration
+        Ok(GrpcMockServer::start().await)
+    }
 
-            let message = stream
-                .try_next()
-                .await?
-                .ok_or_else(|| Status::new(Code::Internal, "Missing request message"))?;
-
-            if let Some(trailers) = stream.trailers().await? {}
-            todo!()
-        };
-        Box::pin(fut)
+    async fn recycle(
+        &self,
+        mock_server: &mut GrpcMockServer,
+    ) -> deadpool::managed::RecycleResult<Infallible> {
+        // Remove all existing settings - we want to start clean when the mock server
+        // is picked up again from the pool.
+        mock_server.reset().await;
+        Ok(())
     }
 }
