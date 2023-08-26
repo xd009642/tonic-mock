@@ -1,4 +1,4 @@
 /target
 /Cargo.lock
-*·swp
+*.swp
 *.swo
