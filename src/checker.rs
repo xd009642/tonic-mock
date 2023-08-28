@@ -1,3 +1,4 @@
+use crate::*;
 use tonic::{Request, Response, Status, Streaming};
 
 pub enum RequestType {
@@ -47,12 +48,4 @@ impl<T> Match<T> {
     pub fn matches(&self, request: &Request<T>) -> bool {
         self.matcher.matches(request)
     }
-}
-
-pub trait Matcher<T> {
-    fn matches(&self, request: &Request<T>) -> bool;
-}
-
-pub trait Responder<T, U> {
-    fn respond(&self, response: Request<T>) -> Result<Response<U>, Status>;
 }
