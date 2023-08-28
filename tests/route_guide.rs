@@ -1,14 +1,14 @@
-use futures::stream;
-use rand::rngs::ThreadRng;
-use rand::Rng;
+use futures::stream::{self, Stream};
 use routeguide::route_guide_client::RouteGuideClient;
 use routeguide::route_guide_server::{RouteGuide, RouteGuideServer};
-use routeguide::{Point, Rectangle, RouteNote};
+use routeguide::{Feature, Point, Rectangle, RouteNote, RouteSummary};
 use std::error::Error;
+use std::pin::Pin;
 use std::time::Duration;
 use tokio::time;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::Status;
+use tonic::{Request, Response};
 use tonic_mock::prelude::*;
 
 pub mod routeguide {
@@ -17,24 +17,31 @@ pub mod routeguide {
 
 fn make_mock_server() {}
 
-#[derive(Debug)]
+#[derive(Default)]
 pub struct MockRouteGuideService {
     get_feature_mock: Option<UnaryMethodMock<Point, Feature>>,
 }
 
+impl MockRouteGuideService {
+    fn mock_get_feature(&mut self) -> &mut UnaryMethodMock<Point, Feature> {
+        self.get_feature_mock = Some(UnaryMethodMock::default());
+        self.get_feature_mock.as_mut().unwrap()
+    }
+}
+
 #[tonic::async_trait]
-impl RouteGuide for RouteGuideService {
+impl RouteGuide for MockRouteGuideService {
     async fn get_feature(&self, request: Request<Point>) -> Result<Response<Feature>, Status> {
         if let Some(s) = self.get_feature_mock.as_ref() {
             s.process_request(request)
         } else {
             Err(tonic::Status::unimplemented(
-                format!("{} is not implemented", #(item.sig.ident)),
+                "get_feature is not implemented",
             ))
         }
     }
 
-    type ListFeaturesStream = ReceiverStream<Result<Feature, Status>>;
+    type ListFeaturesStream = Pin<Box<dyn Stream<Item = Result<Feature, Status>> + Send + 'static>>;
 
     async fn list_features(
         &self,
@@ -58,4 +65,19 @@ impl RouteGuide for RouteGuideService {
     ) -> Result<Response<Self::RouteChatStream>, Status> {
         todo!()
     }
+}
+
+#[tokio::test]
+async fn check_mocked_route_guide() {
+    let mut mock = MockRouteGuideService::default();
+
+    mock.mock_get_feature()
+        .add_matcher(MetadataExistsMatcher::new("grpc-trace-bin".into()))
+        .response(FixedResponse::ok(Feature {
+            name: "Mount Everest".to_string(),
+            location: Some(Point {
+                latitude: 28,
+                longitude: 87,
+            }),
+        }));
 }
