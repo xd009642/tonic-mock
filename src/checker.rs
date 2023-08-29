@@ -1,5 +1,6 @@
 use crate::responder::*;
 use crate::*;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tonic::metadata::MetadataKey;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -13,6 +14,9 @@ pub enum RequestType {
 pub struct UnaryMethodMock<T, U> {
     matchers: Vec<Match<T>>,
     response: Box<dyn Responder<T, U> + Send + Sync>,
+    called: AtomicUsize,
+    expected_calls: Option<usize>,
+    all_matched: AtomicBool,
 }
 
 impl<T, U> Default for UnaryMethodMock<T, U> {
@@ -20,14 +24,24 @@ impl<T, U> Default for UnaryMethodMock<T, U> {
         Self {
             matchers: vec![],
             response: Box::new(Unimplemented),
+            expected_calls: None,
+            called: AtomicUsize::new(0),
+            all_matched: AtomicBool::new(true),
         }
     }
 }
 
 impl<T, U> UnaryMethodMock<T, U> {
     pub fn process_request(&self, request: Request<T>) -> Result<Response<U>, Status> {
+        self.called.fetch_add(1, Ordering::SeqCst);
+        let mut matches = true;
         for matcher in &self.matchers {
-            assert!(matcher.matches(&request))
+            matches &= matcher.matches(&request);
+            if !matches {
+                self.all_matched.fetch_and(false, Ordering::SeqCst);
+                // If we've failed matching do we want to send the response back?
+                break;
+            }
         }
         self.response.respond(request)
     }
@@ -42,6 +56,21 @@ impl<T, U> UnaryMethodMock<T, U> {
     pub fn response(&mut self, r: impl Responder<T, U> + Send + Sync + 'static) -> &mut Self {
         self.response = Box::new(r);
         self
+    }
+
+    pub fn expected(&mut self, calls: usize) -> &mut Self {
+        self.expected_calls = Some(calls);
+        self
+    }
+
+    pub fn verify(&self) -> bool {
+        if let Some(calls) = self.expected_calls {
+            let actual = self.called.load(Ordering::Relaxed);
+            if actual != calls {
+                return false;
+            }
+        }
+        self.all_matched.load(Ordering::Relaxed)
     }
 }
 
