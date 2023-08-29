@@ -3,9 +3,16 @@ use routeguide::route_guide_client::RouteGuideClient;
 use routeguide::route_guide_server::{RouteGuide, RouteGuideServer};
 use routeguide::{Feature, Point, Rectangle, RouteNote, RouteSummary};
 use std::error::Error;
+use std::net::SocketAddr;
+use std::net::TcpListener as StdTcpListener;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 use tokio::time;
+use tonic::transport::server::{Server, TcpIncoming};
 use tonic::transport::Channel;
 use tonic::Status;
 use tonic::{Request, Response};
@@ -18,21 +25,73 @@ pub mod routeguide {
 fn make_mock_server() {}
 
 #[derive(Default)]
-pub struct MockRouteGuideService {
+pub struct MockRouteGuideServiceBuilder {
     get_feature_mock: Option<UnaryMethodMock<Point, Feature>>,
 }
 
-impl MockRouteGuideService {
+#[derive(Default, Clone)]
+pub struct MockRouteGuideService {
+    get_feature_mock: Arc<RwLock<Option<UnaryMethodMock<Point, Feature>>>>,
+}
+
+pub struct Handle {
+    addr: SocketAddr,
+    tx: mpsc::Sender<()>,
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        self.tx.blocking_send(());
+    }
+}
+
+impl MockRouteGuideServiceBuilder {
     fn mock_get_feature(&mut self) -> &mut UnaryMethodMock<Point, Feature> {
         self.get_feature_mock = Some(UnaryMethodMock::default());
         self.get_feature_mock.as_mut().unwrap()
+    }
+
+    fn build(self) -> MockRouteGuideService {
+        MockRouteGuideService {
+            get_feature_mock: Arc::new(RwLock::new(self.get_feature_mock)),
+        }
+    }
+}
+
+impl MockRouteGuideService {
+    pub fn build() -> MockRouteGuideServiceBuilder {
+        Default::default()
+    }
+
+    pub fn serve(&self) -> Handle {
+        let listener = StdTcpListener::bind("127.0.0.1:0")
+            .expect("Failed to bind an OS port for a mock server.");
+        let addr = listener.local_addr().unwrap();
+
+        let to_serve = self.clone();
+
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let server = tokio::spawn(async move {
+            let listener =
+                TcpIncoming::from_listener(TcpListener::from_std(listener).unwrap(), true, None)
+                    .unwrap();
+            Server::builder()
+                .add_service(RouteGuideServer::new(to_serve))
+                .serve_with_incoming_shutdown(listener, async move {
+                    let _ = rx.recv().await;
+                })
+                .await;
+        });
+
+        Handle { tx, addr }
     }
 }
 
 #[tonic::async_trait]
 impl RouteGuide for MockRouteGuideService {
     async fn get_feature(&self, request: Request<Point>) -> Result<Response<Feature>, Status> {
-        if let Some(s) = self.get_feature_mock.as_ref() {
+        if let Some(s) = self.get_feature_mock.read().await.as_ref() {
             s.process_request(request)
         } else {
             Err(tonic::Status::unimplemented(
@@ -69,7 +128,7 @@ impl RouteGuide for MockRouteGuideService {
 
 #[tokio::test]
 async fn check_mocked_route_guide() {
-    let mut mock = MockRouteGuideService::default();
+    let mut mock = MockRouteGuideService::build();
 
     mock.mock_get_feature()
         .add_matcher(MetadataExistsMatcher::new("grpc-trace-bin".into()))
@@ -80,4 +139,6 @@ async fn check_mocked_route_guide() {
                 longitude: 87,
             }),
         }));
+
+    let handle = mock.build().serve();
 }

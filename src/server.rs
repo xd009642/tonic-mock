@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use deadpool::managed::{Object, Pool};
 use once_cell::sync::Lazy;
 use std::convert::Infallible;
-use std::net::TcpListener;
+use tokio::net::TcpListener;
+use tonic::body::BoxBody;
+use tonic::transport::server::TcpIncoming;
+use tonic::transport::Body;
 
 static MOCK_SERVER_POOL: Lazy<Pool<MockServerPoolManager>> = Lazy::new(|| {
     Pool::builder(MockServerPoolManager)
@@ -20,13 +23,30 @@ async fn get_pooled_mock_server() -> PooledMockServer {
         .expect("Failed to get a GrpcMockServer from the pool")
 }
 
-pub struct GrpcMockServer {
+pub struct MockServer {
     listener: TcpListener,
+}
+
+impl MockServer {
+    pub async fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind an OS port for a mock server.");
+        Self { listener }
+    }
+}
+
+pub(crate) struct GrpcMockServer {
+    listener: TcpIncoming,
 }
 
 impl GrpcMockServer {
     async fn start() -> Self {
-        TcpListener::bind("127.0.0.1:0").expect("Failed to bind an OS port for a mock server.");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind an OS port for a mock server.");
+
+        // let local = listener.local_addr();
 
         todo!()
     }
