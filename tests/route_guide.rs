@@ -65,7 +65,7 @@ impl MockRouteGuideService {
         Default::default()
     }
 
-    pub fn serve(&self) -> Handle {
+    pub async fn serve(&self) -> Handle {
         let listener = StdTcpListener::bind("127.0.0.1:0")
             .expect("Failed to bind an OS port for a mock server.");
         let addr = listener.local_addr().unwrap();
@@ -87,6 +87,10 @@ impl MockRouteGuideService {
                 })
                 .await;
         });
+
+        time::sleep(time::Duration::from_secs(1)).await;
+
+        info!("Returning handle");
 
         Handle { tx, addr }
     }
@@ -110,6 +114,7 @@ impl MockRouteGuideService {
 #[tonic::async_trait]
 impl RouteGuide for MockRouteGuideService {
     async fn get_feature(&self, request: Request<Point>) -> Result<Response<Feature>, Status> {
+        info!("Got request");
         if let Some(s) = self.get_feature_mock.read().await.as_ref() {
             s.process_request(request)
         } else {
@@ -161,9 +166,9 @@ async fn check_mocked_route_guide() {
         }));
 
     let server = mock.build();
-    let handle = server.serve();
+    let handle = server.serve().await;
 
-    let mut client = RouteGuideClient::connect(handle.addr.to_string())
+    let mut client = RouteGuideClient::connect(format!("http://{}", handle.addr))
         .await
         .unwrap();
     let mut req = Request::new(Point {
@@ -178,7 +183,7 @@ async fn check_mocked_route_guide() {
 
     server.reset().await;
 
-    let mut client = RouteGuideClient::connect(handle.addr.to_string())
+    let mut client = RouteGuideClient::connect(format!("http://{}", handle.addr))
         .await
         .unwrap();
     let req = Request::new(Point {
