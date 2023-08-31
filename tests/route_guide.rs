@@ -17,6 +17,8 @@ use tonic::transport::Channel;
 use tonic::Status;
 use tonic::{Request, Response};
 use tonic_mock::prelude::*;
+use tracing::info;
+use tracing_test::traced_test;
 
 pub mod routeguide {
     tonic::include_proto!("routeguide");
@@ -73,9 +75,11 @@ impl MockRouteGuideService {
         let (tx, mut rx) = mpsc::channel(1);
 
         let server = tokio::spawn(async move {
+            info!("Creating listener");
             let listener =
                 TcpIncoming::from_listener(TcpListener::from_std(listener).unwrap(), true, None)
                     .unwrap();
+            info!("Creating server");
             Server::builder()
                 .add_service(RouteGuideServer::new(to_serve))
                 .serve_with_incoming_shutdown(listener, async move {
@@ -85,6 +89,21 @@ impl MockRouteGuideService {
         });
 
         Handle { tx, addr }
+    }
+
+    pub async fn verify(&self) -> bool {
+        let read = self.get_feature_mock.read().await;
+        if let Some(x) = read.as_ref() {
+            x.verify()
+        } else {
+            true
+        }
+    }
+
+    pub async fn reset(&self) {
+        if let Some(x) = self.get_feature_mock.write().await.as_mut() {
+            x.reset()
+        }
     }
 }
 
@@ -127,6 +146,7 @@ impl RouteGuide for MockRouteGuideService {
 }
 
 #[tokio::test]
+#[traced_test]
 async fn check_mocked_route_guide() {
     let mut mock = MockRouteGuideService::build();
 
@@ -140,5 +160,32 @@ async fn check_mocked_route_guide() {
             }),
         }));
 
-    let handle = mock.build().serve();
+    let server = mock.build();
+    let handle = server.serve();
+
+    let mut client = RouteGuideClient::connect(handle.addr.to_string())
+        .await
+        .unwrap();
+    let mut req = Request::new(Point {
+        latitude: 2,
+        longitude: 2,
+    });
+    req.metadata_mut()
+        .insert("grpc-trace-bin", "trace me".try_into().unwrap());
+    client.get_feature(req).await.unwrap();
+
+    assert!(server.verify().await);
+
+    server.reset().await;
+
+    let mut client = RouteGuideClient::connect(handle.addr.to_string())
+        .await
+        .unwrap();
+    let req = Request::new(Point {
+        latitude: 2,
+        longitude: 2,
+    });
+    client.get_feature(req).await.unwrap();
+
+    assert!(!server.verify().await);
 }

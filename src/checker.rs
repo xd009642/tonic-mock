@@ -63,6 +63,11 @@ impl<T, U> UnaryMethodMock<T, U> {
         self
     }
 
+    pub fn reset(&mut self) {
+        self.called.store(0, Ordering::SeqCst);
+        self.all_matched.store(true, Ordering::SeqCst);
+    }
+
     pub fn verify(&self) -> bool {
         if let Some(calls) = self.expected_calls {
             let actual = self.called.load(Ordering::Relaxed);
