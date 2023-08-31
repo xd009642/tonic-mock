@@ -43,7 +43,7 @@ pub struct Handle {
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        self.tx.blocking_send(());
+        self.tx.blocking_send(()).unwrap();
     }
 }
 
@@ -69,6 +69,7 @@ impl MockRouteGuideService {
         let listener = StdTcpListener::bind("127.0.0.1:0")
             .expect("Failed to bind an OS port for a mock server.");
         let addr = listener.local_addr().unwrap();
+        info!("Bound to: {:?}", addr);
 
         let to_serve = self.clone();
 
@@ -85,7 +86,10 @@ impl MockRouteGuideService {
                 .serve_with_incoming_shutdown(listener, async move {
                     let _ = rx.recv().await;
                 })
-                .await;
+                .await
+                .unwrap();
+
+            info!("Server closing down");
         });
 
         time::sleep(time::Duration::from_secs(1)).await;
@@ -168,24 +172,28 @@ async fn check_mocked_route_guide() {
     let server = mock.build();
     let handle = server.serve().await;
 
+    info!("Connecting to server: http://{}", handle.addr);
     let mut client = RouteGuideClient::connect(format!("http://{}", handle.addr))
         .await
         .unwrap();
+
     let mut req = Request::new(Point {
         latitude: 2,
         longitude: 2,
     });
     req.metadata_mut()
         .insert("grpc-trace-bin", "trace me".try_into().unwrap());
+
+    info!("Get feature pass test");
     client.get_feature(req).await.unwrap();
 
+    info!("Verifying result");
     assert!(server.verify().await);
 
+    info!("Reset mock server state");
     server.reset().await;
 
-    let mut client = RouteGuideClient::connect(format!("http://{}", handle.addr))
-        .await
-        .unwrap();
+    info!("Run the failing test");
     let req = Request::new(Point {
         latitude: 2,
         longitude: 2,
