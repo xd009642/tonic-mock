@@ -43,7 +43,10 @@ pub struct Handle {
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        self.tx.blocking_send(()).unwrap();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            tx.send(()).await.unwrap();
+        });
     }
 }
 
@@ -66,10 +69,11 @@ impl MockRouteGuideService {
     }
 
     pub async fn serve(&self) -> Handle {
-        let listener = StdTcpListener::bind("127.0.0.1:0")
-            .expect("Failed to bind an OS port for a mock server.");
-        let addr = listener.local_addr().unwrap();
-        info!("Bound to: {:?}", addr);
+        let addr = "127.0.0.1:10000".parse().unwrap();
+        //let listener = StdTcpListener::bind("127.0.0.1:0")
+        //    .expect("Failed to bind an OS port for a mock server.");
+        //let addr = listener.local_addr().unwrap();
+        //info!("Bound to: {:?}", addr);A
 
         let to_serve = self.clone();
 
@@ -77,13 +81,13 @@ impl MockRouteGuideService {
 
         let server = tokio::spawn(async move {
             info!("Creating listener");
-            let listener =
-                TcpIncoming::from_listener(TcpListener::from_std(listener).unwrap(), true, None)
-                    .unwrap();
+            //let listener =
+            //    TcpIncoming::from_listener(TcpListener::from_std(listener).unwrap(), true, None)
+            //        .unwrap();
             info!("Creating server");
             Server::builder()
                 .add_service(RouteGuideServer::new(to_serve))
-                .serve_with_incoming_shutdown(listener, async move {
+                .serve_with_shutdown("127.0.0.1:10000".parse().unwrap(), async move {
                     let _ = rx.recv().await;
                 })
                 .await
@@ -160,7 +164,7 @@ async fn check_mocked_route_guide() {
     let mut mock = MockRouteGuideService::build();
 
     mock.mock_get_feature()
-        .add_matcher(MetadataExistsMatcher::new("grpc-trace-bin".into()))
+        .add_matcher(MetadataExistsMatcher::new("grpc-trace".into()))
         .response(FixedResponse::ok(Feature {
             name: "Mount Everest".to_string(),
             location: Some(Point {
@@ -182,7 +186,7 @@ async fn check_mocked_route_guide() {
         longitude: 2,
     });
     req.metadata_mut()
-        .insert("grpc-trace-bin", "trace me".try_into().unwrap());
+        .insert("grpc-trace", "trace me".try_into().unwrap());
 
     info!("Get feature pass test");
     client.get_feature(req).await.unwrap();
