@@ -1,6 +1,7 @@
 use crate::responder::*;
+use crate::times::*;
 use crate::*;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tonic::metadata::MetadataKey;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -14,8 +15,8 @@ pub enum RequestType {
 pub struct UnaryMethodMock<T, U> {
     matchers: Vec<Match<T>>,
     response: Box<dyn Responder<T, U> + Send + Sync>,
-    called: AtomicUsize,
-    expected_calls: Option<usize>,
+    called: AtomicU64,
+    expected_calls: Option<Times>,
     all_matched: AtomicBool,
 }
 
@@ -25,7 +26,7 @@ impl<T, U> Default for UnaryMethodMock<T, U> {
             matchers: vec![],
             response: Box::new(Unimplemented),
             expected_calls: None,
-            called: AtomicUsize::new(0),
+            called: AtomicU64::new(0),
             all_matched: AtomicBool::new(true),
         }
     }
@@ -58,8 +59,8 @@ impl<T, U> UnaryMethodMock<T, U> {
         self
     }
 
-    pub fn expected(&mut self, calls: usize) -> &mut Self {
-        self.expected_calls = Some(calls);
+    pub fn expect(&mut self, calls: impl Into<Times>) -> &mut Self {
+        self.expected_calls = Some(calls.into());
         self
     }
 
@@ -69,9 +70,9 @@ impl<T, U> UnaryMethodMock<T, U> {
     }
 
     pub fn verify(&self) -> bool {
-        if let Some(calls) = self.expected_calls {
+        if let Some(calls) = self.expected_calls.as_ref() {
             let actual = self.called.load(Ordering::Relaxed);
-            if actual != calls {
+            if !calls.contains(actual) {
                 return false;
             }
         }

@@ -168,6 +168,7 @@ async fn check_mocked_route_guide() {
 
     mock.mock_get_feature()
         .add_matcher(MetadataExistsMatcher::new("grpc-trace".into()))
+        .expect(1)
         .response(FixedResponse::ok(Feature {
             name: "Mount Everest".to_string(),
             location: Some(Point {

@@ -9,6 +9,7 @@ pub use tonic_mock_macros::mock;
 pub mod checker;
 pub mod responder;
 pub mod server;
+pub mod times;
 
 pub mod prelude {
     pub use crate::checker::*;
