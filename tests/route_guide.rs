@@ -4,7 +4,6 @@ use routeguide::route_guide_server::{RouteGuide, RouteGuideServer};
 use routeguide::{Feature, Point, Rectangle, RouteNote, RouteSummary};
 use std::error::Error;
 use std::net::SocketAddr;
-use std::net::TcpListener as StdTcpListener;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +33,7 @@ pub struct MockRouteGuideServiceBuilder {
 #[derive(Default, Clone)]
 pub struct MockRouteGuideService {
     get_feature_mock: Arc<RwLock<Option<UnaryMethodMock<Point, Feature>>>>,
+    server_handle: Arc<RwLock<Option<Handle>>>,
 }
 
 pub struct Handle {
@@ -59,6 +59,7 @@ impl MockRouteGuideServiceBuilder {
     fn build(self) -> MockRouteGuideService {
         MockRouteGuideService {
             get_feature_mock: Arc::new(RwLock::new(self.get_feature_mock)),
+            server_handle: Arc::default(),
         }
     }
 }
@@ -68,12 +69,12 @@ impl MockRouteGuideService {
         Default::default()
     }
 
-    pub async fn serve(&self) -> Handle {
-        let addr = "127.0.0.1:10000".parse().unwrap();
-        //let listener = StdTcpListener::bind("127.0.0.1:0")
-        //    .expect("Failed to bind an OS port for a mock server.");
-        //let addr = listener.local_addr().unwrap();
-        //info!("Bound to: {:?}", addr);A
+    pub async fn serve(&self) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Failed to bind an OS port for a mock server.");
+        let addr = listener.local_addr().unwrap();
+        info!("Bound to: {:?}", addr);
 
         let to_serve = self.clone();
 
@@ -81,13 +82,11 @@ impl MockRouteGuideService {
 
         let server = tokio::spawn(async move {
             info!("Creating listener");
-            //let listener =
-            //    TcpIncoming::from_listener(TcpListener::from_std(listener).unwrap(), true, None)
-            //        .unwrap();
+            let listener = TcpIncoming::from_listener(listener, true, None).unwrap();
             info!("Creating server");
             Server::builder()
                 .add_service(RouteGuideServer::new(to_serve))
-                .serve_with_shutdown("127.0.0.1:10000".parse().unwrap(), async move {
+                .serve_with_incoming_shutdown(listener, async move {
                     let _ = rx.recv().await;
                 })
                 .await
@@ -99,8 +98,7 @@ impl MockRouteGuideService {
         time::sleep(time::Duration::from_secs(1)).await;
 
         info!("Returning handle");
-
-        Handle { tx, addr }
+        self.server_handle.write().await.insert(Handle { tx, addr });
     }
 
     pub async fn verify(&self) -> bool {
@@ -116,6 +114,11 @@ impl MockRouteGuideService {
         if let Some(x) = self.get_feature_mock.write().await.as_mut() {
             x.reset()
         }
+    }
+
+    pub async fn listening_address(&self) -> Option<String> {
+        let r = self.server_handle.read().await;
+        r.as_ref().map(|x| format!("http://{}", x.addr))
     }
 }
 
@@ -174,12 +177,12 @@ async fn check_mocked_route_guide() {
         }));
 
     let server = mock.build();
-    let handle = server.serve().await;
+    server.serve().await;
 
-    info!("Connecting to server: http://{}", handle.addr);
-    let mut client = RouteGuideClient::connect(format!("http://{}", handle.addr))
-        .await
-        .unwrap();
+    let addr = server.listening_address().await.unwrap();
+
+    info!("Connecting to server: http://{}", addr);
+    let mut client = RouteGuideClient::connect(addr).await.unwrap();
 
     let mut req = Request::new(Point {
         latitude: 2,
