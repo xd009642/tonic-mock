@@ -1,7 +1,10 @@
 use core::future::Future;
 use http::header::HeaderMap;
+use tokio::sync::broadcast::{self, error::RecvError};
 use tonic::codec::Codec;
+use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
+use tracing::error;
 
 // Public macro reexport
 pub use tonic_mock_macros::mock;
@@ -19,6 +22,38 @@ pub mod prelude {
 
 pub trait Matcher<T> {
     fn matches(&self, request: &Request<T>) -> bool;
+}
+
+#[async_trait::async_trait]
+pub trait StreamingMatcher<T: Clone + Send + 'static> {
+    fn header_matches(&self, metadata: &MetadataMap, is_trailer: bool) -> bool {
+        true
+    }
+
+    fn single_match(&self, value: &T) -> bool {
+        true
+    }
+
+    async fn stream_match(&self, mut rx: broadcast::Receiver<Option<T>>) -> bool {
+        let mut ret = true;
+        let mut running = true;
+        while running {
+            let value = rx.recv().await;
+            ret &= match value {
+                Ok(Some(s)) => self.single_match(&s),
+                Ok(None) | Err(RecvError::Closed) => {
+                    running = false;
+                    true
+                }
+                Err(RecvError::Lagged(lag)) => {
+                    running = false;
+                    error!("Checking channel lagged by {} messages", lag);
+                    false
+                }
+            };
+        }
+        ret
+    }
 }
 
 pub trait Responder<T, U> {

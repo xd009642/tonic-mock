@@ -126,7 +126,9 @@ we can reuse the unary matchers, spies and potentially the responses.
 
 ### Unary Mocks
 
-Below is a code sketch for a simple unary mock just to check a specific 
+Below is a code sketch for a simple unary mock just to check a specific method
+is only called with a trace header. We may want this to ensure that our
+distributed tracing system is being fully utilised!
 
 ```rust
 #[tokio::test]
@@ -177,4 +179,53 @@ async fn check_mocked_route_guide() {
 
     assert!(!server.verify().await);
 }
+```
+
+### Client Streaming Mocks
+
+Looking at the signature of the client streaming generated trait we have:
+
+```rust
+async fn record_route(
+    &self, 
+    request: Request<tonic::Streaming<Point>>
+) -> Result<Response<RouteSummary>, Status>;
+```
+
+And looking at `tonic::Streaming` we have two methods:
+
+1. `Streaming::message` which returns an `Option<T>` so you can get all the messages from the stream
+2. `Streaming::trailers` consumes all the messages and gets trailing metadata.
+
+So from here we can see something for our metadata matching.
+
+1. We'll want to check trailing and starting metadata
+2. Some checkers may be header only or tailer only. Some may apply to both
+
+Do we want any matches that take in all the messages and all the metadata..?
+
+Also for working our our response based on the input we'll want to grab all the
+input. For checkers which need the stream context we'll have to consider some sort
+of broadcast channel potentially?
+
+Lets think about how  the code might look for our test:
+
+```rust
+
+```rust
+#[tokio::test]
+#[traced_test]
+async fn check_mocked_route_guide() {
+    let mut mock = MockRouteGuideService::build();
+
+    mock.mock_record_route()
+        .add_matcher(MetadataExistsMatcher::new("grpc-trace".into()))
+        .response(FixedResponse::ok(Feature {
+            name: "Mount Everest".to_string(),
+            location: Some(Point {
+                latitude: 28,
+                longitude: 87,
+            }),
+        }));
+
 ```

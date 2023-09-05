@@ -114,16 +114,42 @@ impl<T> From<Box<dyn Matcher<T> + Send + Sync>> for Match<T> {
     }
 }
 
-pub struct MetadataExistsMatcher(String);
+pub(crate) enum MetadataLocation {
+    Any,
+    Header,
+    Trailer,
+}
+
+pub struct MetadataExistsMatcher {
+    key: String,
+    area: MetadataLocation,
+}
 
 impl MetadataExistsMatcher {
     pub fn new(key: String) -> Self {
-        Self(key)
+        Self {
+            key,
+            area: MetadataLocation::Any,
+        }
+    }
+
+    pub fn header(key: String) -> Self {
+        Self {
+            key,
+            area: MetadataLocation::Header,
+        }
+    }
+
+    pub fn trailer(key: String) -> Self {
+        Self {
+            key,
+            area: MetadataLocation::Trailer,
+        }
     }
 }
 
 impl<T> Matcher<T> for MetadataExistsMatcher {
     fn matches(&self, request: &Request<T>) -> bool {
-        request.metadata().contains_key(&self.0)
+        request.metadata().contains_key(&self.key)
     }
 }
