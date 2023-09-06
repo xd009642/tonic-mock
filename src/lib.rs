@@ -9,13 +9,13 @@ use tracing::error;
 // Public macro reexport
 pub use tonic_mock_macros::mock;
 
-pub mod checker;
+pub mod matchers;
 pub mod responder;
 pub mod server;
 pub mod times;
 
 pub mod prelude {
-    pub use crate::checker::*;
+    pub use crate::matchers::*;
     pub use crate::responder::*;
     pub use crate::server::*;
 }
@@ -26,7 +26,8 @@ pub trait Matcher<T> {
 
 #[async_trait::async_trait]
 pub trait StreamingMatcher<T: Clone + Send + 'static> {
-    fn header_matches(&self, metadata: &MetadataMap, is_trailer: bool) -> bool {
+    // TODO this should probably be an Option
+    fn metadata_matches(&self, metadata: &MetadataMap, is_trailer: bool) -> bool {
         true
     }
 
@@ -34,6 +35,7 @@ pub trait StreamingMatcher<T: Clone + Send + 'static> {
         true
     }
 
+    // TODO we need to think about sending errors down the channel
     async fn stream_match(&self, mut rx: broadcast::Receiver<Option<T>>) -> bool {
         let mut ret = true;
         let mut running = true;
@@ -58,6 +60,16 @@ pub trait StreamingMatcher<T: Clone + Send + 'static> {
 
 pub trait Responder<T, U> {
     fn respond(&self, request: Request<T>) -> Result<Response<U>, Status> {
+        Err(tonic::Status::unimplemented("Method is not implemented"))
+    }
+}
+
+pub trait StreamingResponder<T, U> {
+    fn response(
+        &self,
+        header: &MetadataMap,
+        messages: broadcast::Receiver<Option<T>>,
+    ) -> Result<Response<U>, Status> {
         Err(tonic::Status::unimplemented("Method is not implemented"))
     }
 }
