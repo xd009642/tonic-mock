@@ -1,5 +1,13 @@
 [package]
 name = "tonic-mock"
+version.workspace = true
+edition.workspace = true
+
+[workspace]
+members = [".", "tonic-mock-build"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 

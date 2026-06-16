@@ -21,7 +21,9 @@ pub fn configure() -> Builder {
     Builder::default()
 }
 
-pub fn compile_protos(proto: impl AsRef<std::path::Path>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn compile_protos(
+    proto: impl AsRef<std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
     configure().compile(&[proto], &["."])
 }
 
