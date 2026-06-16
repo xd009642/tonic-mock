@@ -1,4 +1,6 @@
 /target
 /Cargo.lock
+/tonic-mock-build/target
+/tonic-mock-build/Cargo.lock
 *.swp
 *.swo

@@ -1,6 +1,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::configure()
-        //    .server_mod_attribute("routeguide", "#[tonic_mock::mock]")
+    tonic_mock_build::configure()
+        .build_server(true)
+        .build_client(true)
         .compile(
             &["tests/protos/routeguide/route_guide.proto"],
             &["tests/protos"],

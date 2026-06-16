@@ -1,6 +1,6 @@
 //! This is taken from the internals of [wiremock](https://github.com/lukeMathWalker/wiremock-rs)
 //! where I felt it was an appropriate abstraction to start from.
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::ops::{
     Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
