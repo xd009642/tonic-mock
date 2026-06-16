@@ -51,7 +51,7 @@ impl Builder {
         let mut config = prost_build::Config::new();
         config.service_generator(Box::new(CombinedServiceGenerator {
             tonic,
-            mock: MockServiceGenerator::default(),
+            mock: self.build_server.then(MockServiceGenerator::default),
         }));
         config.compile_protos(protos, includes)?;
         Ok(())
@@ -60,23 +60,29 @@ impl Builder {
 
 struct CombinedServiceGenerator {
     tonic: Box<dyn prost_build::ServiceGenerator>,
-    mock: MockServiceGenerator,
+    mock: Option<MockServiceGenerator>,
 }
 
 impl prost_build::ServiceGenerator for CombinedServiceGenerator {
     fn generate(&mut self, service: prost_build::Service, buf: &mut String) {
         self.tonic.generate(service.clone(), buf);
-        self.mock.generate(service, buf);
+        if let Some(mock) = self.mock.as_mut() {
+            mock.generate(service, buf);
+        }
     }
 
     fn finalize(&mut self, buf: &mut String) {
         self.tonic.finalize(buf);
-        self.mock.finalize(buf);
+        if let Some(mock) = self.mock.as_mut() {
+            mock.finalize(buf);
+        }
     }
 
     fn finalize_package(&mut self, package: &str, buf: &mut String) {
         self.tonic.finalize_package(package, buf);
-        self.mock.finalize_package(package, buf);
+        if let Some(mock) = self.mock.as_mut() {
+            mock.finalize_package(package, buf);
+        }
     }
 }
 
@@ -125,7 +131,7 @@ fn generate_mock_service(service: &prost_build::Service) -> TokenStream {
     let trait_items = service.methods.iter().map(trait_method);
     let associated_types = service.methods.iter().filter(|m| m.server_streaming).map(|method| {
         let ty = associated_stream_ident(method);
-        let output = parse_type(&method.output_type);
+        let output = parse_mock_module_type(&method.output_type);
         quote! {
             type #ty = ::std::pin::Pin<
                 Box<dyn ::futures::Stream<Item = Result<#output, ::tonic::Status>> + Send + 'static>
@@ -235,8 +241,8 @@ fn generate_mock_service(service: &prost_build::Service) -> TokenStream {
 
 fn mock_field(method: &prost_build::Method) -> Option<TokenStream> {
     let field = mock_field_ident(method);
-    let input = parse_type(&method.input_type);
-    let output = parse_type(&method.output_type);
+    let input = parse_mock_module_type(&method.input_type);
+    let output = parse_mock_module_type(&method.output_type);
     match method_kind(method)? {
         MethodKind::Unary => Some(quote! {
             #field: ::std::sync::Arc<::tokio::sync::RwLock<Option<::tonic_mock::UnaryMethodMock<#input, #output>>>>
@@ -249,8 +255,8 @@ fn mock_field(method: &prost_build::Method) -> Option<TokenStream> {
 
 fn builder_field(method: &prost_build::Method) -> Option<TokenStream> {
     let field = mock_field_ident(method);
-    let input = parse_type(&method.input_type);
-    let output = parse_type(&method.output_type);
+    let input = parse_mock_module_type(&method.input_type);
+    let output = parse_mock_module_type(&method.output_type);
     match method_kind(method)? {
         MethodKind::Unary => Some(quote! {
             #field: Option<::tonic_mock::UnaryMethodMock<#input, #output>>
@@ -264,8 +270,8 @@ fn builder_field(method: &prost_build::Method) -> Option<TokenStream> {
 fn builder_method(method: &prost_build::Method) -> Option<TokenStream> {
     let method_name = format_ident!("mock_{}", method.name);
     let field = mock_field_ident(method);
-    let input = parse_type(&method.input_type);
-    let output = parse_type(&method.output_type);
+    let input = parse_mock_module_type(&method.input_type);
+    let output = parse_mock_module_type(&method.output_type);
     match method_kind(method)? {
         MethodKind::Unary => Some(quote! {
             pub fn #method_name(
@@ -313,8 +319,8 @@ fn reset_block(method: &prost_build::Method) -> Option<TokenStream> {
 
 fn trait_method(method: &prost_build::Method) -> TokenStream {
     let fn_name = format_ident!("{}", method.name);
-    let input = parse_type(&method.input_type);
-    let output = parse_type(&method.output_type);
+    let input = parse_mock_module_type(&method.input_type);
+    let output = parse_mock_module_type(&method.output_type);
     let field = mock_field_ident(method);
 
     match (method.client_streaming, method.server_streaming) {
@@ -392,4 +398,73 @@ fn associated_stream_ident(method: &prost_build::Method) -> syn::Ident {
 
 fn parse_type(ty: &str) -> syn::Type {
     syn::parse_str(ty).unwrap_or_else(|_| panic!("invalid generated Rust type: {}", ty))
+}
+
+fn parse_mock_module_type(ty: &str) -> syn::Type {
+    let ty = ty
+        .strip_prefix("super::")
+        .map(|rest| format!("super::super::{}", rest))
+        .unwrap_or_else(|| ty.to_owned());
+    parse_type(&ty)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prost_build::ServiceGenerator;
+
+    fn render_service(build_client: bool, build_server: bool) -> String {
+        let tonic = tonic_build::configure()
+            .build_client(build_client)
+            .build_server(build_server)
+            .service_generator();
+        let mut generator = CombinedServiceGenerator {
+            tonic,
+            mock: build_server.then(MockServiceGenerator::default),
+        };
+        let mut buf = String::new();
+        generator.generate(test_service(), &mut buf);
+        generator.finalize(&mut buf);
+        buf
+    }
+
+    fn test_service() -> prost_build::Service {
+        prost_build::Service {
+            name: "Example".to_owned(),
+            proto_name: "Example".to_owned(),
+            package: "fixtures".to_owned(),
+            comments: Default::default(),
+            methods: vec![prost_build::Method {
+                name: "get".to_owned(),
+                proto_name: "Get".to_owned(),
+                comments: Default::default(),
+                input_type: "Request".to_owned(),
+                output_type: "Reply".to_owned(),
+                input_proto_type: ".fixtures.Request".to_owned(),
+                output_proto_type: ".fixtures.Reply".to_owned(),
+                options: Default::default(),
+                client_streaming: false,
+                server_streaming: false,
+            }],
+            options: Default::default(),
+        }
+    }
+
+    #[test]
+    fn emits_mocks_when_server_generation_is_enabled_without_clients() {
+        let generated = render_service(false, true);
+
+        assert!(generated.contains("pub mod example_server"));
+        assert!(generated.contains("pub mod example_mock"));
+        assert!(!generated.contains("pub mod example_client"));
+    }
+
+    #[test]
+    fn skips_mocks_when_server_generation_is_disabled() {
+        let generated = render_service(true, false);
+
+        assert!(generated.contains("pub mod example_client"));
+        assert!(!generated.contains("pub mod example_server"));
+        assert!(!generated.contains("pub mod example_mock"));
+    }
 }

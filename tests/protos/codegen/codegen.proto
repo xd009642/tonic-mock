@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package codegen;
+
+import "codegen/shared.proto";
+
+service Primary {
+  rpc Get(shared.SharedRequest) returns (shared.SharedReply) {}
+  rpc Watch(WatchRequest) returns (stream WatchReply) {}
+}
+
+service Secondary {
+  rpc Ping(LocalRequest) returns (LocalReply) {}
+}
+
+service StreamOnly {
+  rpc Subscribe(WatchRequest) returns (stream WatchReply) {}
+  rpc Upload(stream LocalRequest) returns (LocalReply) {}
+  rpc Chat(stream LocalRequest) returns (stream LocalReply) {}
+}
+
+message LocalRequest {
+  string value = 1;
+}
+
+message LocalReply {
+  string value = 1;
+}
+
+message WatchRequest {
+  string topic = 1;
+}
+
+message WatchReply {
+  string event = 1;
+}

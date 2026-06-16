@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package shared;
+
+message SharedRequest {
+  string value = 1;
+}
+
+message SharedReply {
+  string value = 1;
+}
